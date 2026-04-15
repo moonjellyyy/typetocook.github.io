@@ -1,19 +1,19 @@
 // Font & Text
 let font; 
-let msg, fontSize;
-let alphabets = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"];
-let textOffsetX, textOffsetY;
-let pg; // 글자 내부 판별을 위한 오프스크린 그래픽스
+let inputField;
+let pg; // 가상 캔버스
 
 // Ingredients & Points
-let activeIngredients = [];
-let availablePoints = [];
+let rightPoints = []; // 글자의 내부 좌표들 (재료가 쌓일 공간)
+let activeIngredients = []; // 생성된 재료들
+let prevUserTxt = "";
 let spawnTimer = 0;
+let liveFontSize;
 
 // UI Elements
-let sizeSlider, cookSlider;
+let sizeSlider, cookSlider, exportBtn;
 
-// Burger Constants & Names
+// Burger Constants
 const BUN_TOP = 0, PATTY = 1, CHEESE = 2, LETTUCE = 3, TOMATO = 4, BUN_BOT = 5;
 const TYPES = [BUN_TOP, PATTY, CHEESE, LETTUCE, TOMATO, BUN_BOT];
 const TYPE_NAMES = ["Bun Top", "Patty", "Cheese", "Lettuce", "Tomato", "Bun Bot"];
@@ -24,181 +24,190 @@ function preload() {
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
-  pg = createGraphics(windowWidth, windowHeight); // 가상 캔버스 생성
+  pg = createGraphics(windowWidth, windowHeight);
+  pg.pixelDensity(1); 
   angleMode(DEGREES);
   
-  // 알파벳 선택 드롭다운
-  msg = createSelect();
-  msg.position(20, 20);
-  msg.style('font-size', '16px');
-  for (let i = 0; i < alphabets.length; i++) {
-    msg.option(alphabets[i]);
-  }
-  msg.changed(resetLetter);
-
-  // 오른쪽 슬라이더 생성
-  sizeSlider = createSlider(10, 50, 25);
-  sizeSlider.position(windowWidth - 140, 100);
-  sizeSlider.style('width', '100px');
-
-  cookSlider = createSlider(0, 150, 0); // 0(정상) ~ 150(검게 탄 느낌)
-  cookSlider.position(windowWidth - 140, 160);
-  cookSlider.style('width', '100px');
+  // 1. 텍스트 박스 (화면 중앙 하단)
+  inputField = createInput('');
+  inputField.attribute('placeholder', 'Type here to cook...');
+  inputField.position(windowWidth / 2 - 125, windowHeight - 90);
+  inputField.style('width', '250px');
+  inputField.style('padding', '10px');
+  inputField.style('font-family', 'jgs5, monospace');
+  inputField.style('text-align', 'center');
+  inputField.style('font-size', '16px');
+  inputField.style('border-radius', '0px'); 
+  inputField.style('border', 'none');
   
-  resetLetter();
+  inputField.input(onTextInput);
+
+  // 2. Export 버튼 (우측 상단)
+  exportBtn = createButton('Export');
+  exportBtn.position(windowWidth - 100, 20); 
+  exportBtn.style('background', 'none');
+  exportBtn.style('border', 'none');
+  exportBtn.style('color', 'white');
+  exportBtn.style('font-family', 'jgs5, monospace');
+  exportBtn.style('font-size', '16px');
+  exportBtn.style('cursor', 'pointer');
+  exportBtn.style('text-align', 'right');
+  exportBtn.mousePressed(() => saveCanvas('type-to-cook', 'jpg'));
+
+  // 3. 슬라이더 (우측 하단)
+  // 두 슬라이더의 y좌표를 동일하게 맞춤 (windowHeight - 40)
+  sizeSlider = createSlider(10, 50, 25);
+  sizeSlider.position(windowWidth - 240, windowHeight - 40); 
+  sizeSlider.style('width', '90px');
+  
+  cookSlider = createSlider(0, 150, 0); 
+  cookSlider.position(windowWidth - 120, windowHeight - 40);
+  cookSlider.style('width', '90px');
 }
 
 function draw() {
   background("#FF0000"); 
 
-  // 상단 타이틀
   drawTitle();
-
-  // 중앙 글자 가이드라인 (연하게)
-  drawTextGuide();
-
-  // 쌓인 재료들 업데이트 및 출력
-  for (let ing of activeIngredients) {
-    ing.update();
-    ing.display();
-  }
-
-  // 왼쪽 아이콘 패널 및 오른쪽 슬라이더 라벨
-  drawLeftPanel();
-  drawRightLabels();
+  drawLiveText(); 
+  drawBottomLeftPanel();
+  drawBottomRightLabels();
 }
 
 function drawTitle() {
   push();
-  fill(255);
-  noStroke();
-  rectMode(CENTER);
-  rect(windowWidth / 2, 40, 320, 60);
   textFont(font); 
   textSize(36);
   textAlign(CENTER, CENTER);
-  fill(0);
-  text("type to cook", windowWidth / 2, 35);
+  fill(255); 
+  text("Type to Cook", windowWidth / 2, 40); 
   pop();
 }
 
-function drawTextGuide() {
-  push();
-  noFill();
-  stroke(255, 255, 255, 40);
-  strokeWeight(1);
-  textFont(font);
-  textSize(fontSize);
-  textAlign(LEFT, BASELINE);
-  text(msg.selected(), textOffsetX, textOffsetY);
-  pop();
+function onTextInput() {
+  let currentTxt = inputField.value();
+  if (currentTxt !== prevUserTxt) {
+    prevUserTxt = currentTxt;
+    activeIngredients = []; 
+    updateTextPoints(currentTxt);
+  }
 }
 
-// 글자 내부 공간의 좌표들을 추출하는 핵심 로직
-function resetLetter() {
-  activeIngredients = [];
-  let m = msg.selected();
-  fontSize = min(windowWidth, windowHeight) * 0.7;
-  let bounds = font.textBounds(m, 0, 0, fontSize);
-  textOffsetX = (windowWidth - bounds.w) / 2 - bounds.x;
-  textOffsetY = (windowHeight / 2) + (bounds.h / 2);
+function updateTextPoints(txt) {
+  rightPoints = [];
+  if (txt === "") return;
 
-  // 오프스크린에 글자 그리기
+  liveFontSize = min(windowWidth / max(txt.length, 1) * 1.5, windowHeight * 0.4); 
+  
+  let bounds = font.textBounds(txt, 0, 0, liveFontSize);
+  let rx = windowWidth / 2 - bounds.w / 2;
+  let ry = windowHeight / 2 + bounds.h / 2 - 40; 
+
   pg.clear();
+  pg.background(0);
   pg.fill(255);
+  pg.noStroke();
   pg.textFont(font);
-  pg.textSize(fontSize);
+  pg.textSize(liveFontSize);
   pg.textAlign(LEFT, BASELINE);
-  pg.text(m, textOffsetX, textOffsetY);
+  pg.text(txt, rx, ry);
   pg.loadPixels();
 
-  availablePoints = [];
-  // 픽셀을 촘촘히 검사하여 글자 내부(흰색 부분) 좌표 추출
-  let step = 12; // 이 값을 줄이면 더 촘촘하게 채워집니다.
+  let step = 12; 
   for (let y = 0; y < height; y += step) {
     for (let x = 0; x < width; x += step) {
       let index = (x + y * width) * 4;
-      if (pg.pixels[index] > 128) { // 알파값 혹은 밝기가 일정 수준 이상이면 내부로 판단
-        availablePoints.push({x: x, y: y});
+      if (pg.pixels[index] > 128) {
+        rightPoints.push({ x: x, y: y });
       }
     }
   }
-
-  // Bottom-up: 아래쪽 좌표부터 채워지도록 정렬
-  availablePoints.sort((a, b) => b.y - a.y);
+  rightPoints.sort((a, b) => a.y - b.y); 
 }
 
-function drawLeftPanel() {
-  let boxSize = 60;
-  let startY = 100;
-  let panelX = 50;
+function drawLiveText() {
+  let userTxt = prevUserTxt;
+
+  if (userTxt === "") {
+    push();
+    fill(255, 100);
+    noStroke();
+    textFont(font);
+    textSize(24);
+    textAlign(CENTER, CENTER);
+    text("Type below to start cooking!", windowWidth / 2, windowHeight / 2);
+    pop();
+    return;
+  }
+
+  let bounds = font.textBounds(userTxt, 0, 0, liveFontSize);
+  let rx = windowWidth / 2 - bounds.w / 2;
+  let ry = windowHeight / 2 + bounds.h / 2 - 40;
+
+  push();
+  noFill();
+  stroke(255, 25); 
+  strokeWeight(1);
+  textFont(font);
+  textSize(liveFontSize);
+  textAlign(LEFT, BASELINE);
+  text(userTxt, rx, ry);
+  pop();
+
+  for (let ing of activeIngredients) {
+    ing.update();
+    ing.display();
+  }
+}
+
+function drawBottomLeftPanel() {
+  let boxSize = 45;
+  let spacing = 15;
+  let startX = 30 + boxSize / 2;
+  let by = windowHeight - 40; 
 
   for (let i = 0; i < 6; i++) {
-    let by = startY + i * (boxSize + 15);
-    let bx = panelX;
-
-    let isHover = mouseX > bx - boxSize/2 && mouseX < bx + boxSize/2 &&
-                  mouseY > by - boxSize/2 && mouseY < by + boxSize/2;
+    let bx = startX + i * (boxSize + spacing);
+    let isHover = dist(mouseX, mouseY, bx, by) < boxSize/2;
     let isPressed = mouseIsPressed && isHover;
 
-    // 아이콘 박스 (테두리 없는 직사각형)
     push();
     rectMode(CENTER);
     noStroke();
-    fill(isPressed ? 200 : 255);
+    fill(isHover ? (isPressed ? 180 : 220) : 255);
     rect(bx, by, boxSize, boxSize);
-
-    // 아이콘 그리기 (슬라이더 영향 안 받음)
     translate(bx, by);
-    drawIngredientShape(TYPES[i], boxSize * 0.6, 0); // 굽기(tint) 0
+    drawIngredientShape(TYPES[i], boxSize * 0.6, 0); 
     pop();
 
-    // 이름 표시
+    push();
     fill(255);
-    textSize(11);
-    textAlign(CENTER, TOP);
-    text(TYPE_NAMES[i], bx, by + boxSize / 2 + 5);
+    textFont(font); 
+    textSize(10);
+    textAlign(CENTER, BOTTOM);
+    text(TYPE_NAMES[i], bx, by - boxSize / 2 - 5);
+    pop();
 
-    if (isPressed && millis() - spawnTimer > 50) {
-      spawnIngredient(TYPES[i], bx, by);
+    if (isPressed && millis() - spawnTimer > 30) {
+      if (rightPoints.length > 0) {
+        let pt = rightPoints.pop();
+        activeIngredients.push(new Ingredient(bx, by, pt.x, pt.y, TYPES[i], sizeSlider.value(), cookSlider.value()));
+      }
       spawnTimer = millis();
     }
   }
 }
 
-function drawRightLabels() {
+function drawBottomRightLabels() {
   push();
   fill(255);
   textFont(font);
-  textSize(14);
-  textAlign(RIGHT);
-  text("SIZE", windowWidth - 150, 115);
-  text("COOK", windowWidth - 150, 175);
-  
-  textSize(10);
-  text("Small", windowWidth - 140, 135);
-  textAlign(LEFT);
-  text("Large", windowWidth - 40, 135);
-  
-  textAlign(RIGHT);
-  text("Rare", windowWidth - 140, 195);
-  textAlign(LEFT);
-  text("Burnt", windowWidth - 40, 195);
+  textSize(12);
+  textAlign(CENTER, BOTTOM);
+  // 두 라벨의 y좌표도 동일하게 맞춤 (windowHeight - 50)
+  text("Size", windowWidth - 195, windowHeight - 50);
+  text("Cook", windowWidth - 75, windowHeight - 50);
   pop();
-}
-
-function spawnIngredient(type, startX, startY) {
-  if (availablePoints.length > 0) {
-    let pt = availablePoints.pop();
-    // 현재 슬라이더 값을 적용하여 재료 생성
-    activeIngredients.push(new Ingredient(startX, startY, pt.x, pt.y, type, sizeSlider.value(), cookSlider.value()));
-  }
-}
-
-function windowResized() {
-  resizeCanvas(windowWidth, windowHeight);
-  pg = createGraphics(windowWidth, windowHeight);
-  resetLetter();
 }
 
 class Ingredient {
@@ -209,14 +218,12 @@ class Ingredient {
     this.targetY = targetY;
     this.type = type;
     this.size = size;
-    this.tint = tint; // 굽기 정도
+    this.tint = tint; 
   }
-  
   update() {
     this.x = lerp(this.x, this.targetX, 0.1);
     this.y = lerp(this.y, this.targetY, 0.1);
   }
-  
   display() {
     push();
     translate(this.x, this.y);
@@ -228,30 +235,35 @@ class Ingredient {
 function drawIngredientShape(type, s, tint) {
   noStroke();
   rectMode(CENTER);
-  
-  // 색상 계산 (기본 색상에서 tint만큼 어둡게)
   let getCol = (hex) => {
     let c = color(hex);
     return color(red(c) - tint, green(c) - tint, blue(c) - tint);
   };
+  
+  if (type === BUN_TOP) { fill(getCol('#E89F4C')); arc(0, 0, s, s, 180, 0, CHORD); }
+  else if (type === PATTY) { fill(getCol('#5C3A21')); rect(0, 0, s, s*0.4); }
+  else if (type === CHEESE) { fill(getCol('#FACC2E')); push(); rotate(45); rect(0, 0, s*0.7, s*0.7); pop(); }
+  else if (type === LETTUCE) { fill(getCol('#64FE2E')); ellipse(0, 0, s, s*0.4); }
+  else if (type === TOMATO) { fill(getCol('#ff6666')); ellipse(0, 0, s*0.8, s*0.3); }
+  else if (type === BUN_BOT) { fill(getCol('#E89F4C')); arc(0, 0, s, s, 0, 180, CHORD); }
+}
 
-  if (type === BUN_TOP) {
-    fill(getCol('#E89F4C')); 
-    arc(0, 0, s, s, 180, 0, CHORD);
-  } else if (type === PATTY) {
-    fill(getCol('#5C3A21')); 
-    rect(0, 0, s, s*0.4);
-  } else if (type === CHEESE) {
-    fill(getCol('#FACC2E')); 
-    push(); rotate(45); rect(0, 0, s*0.7, s*0.7); pop();
-  } else if (type === LETTUCE) {
-    fill(getCol('#64FE2E')); 
-    ellipse(0, 0, s, s*0.4);
-  } else if (type === TOMATO) {
-    fill(getCol('#ff6666')); 
-    ellipse(0, 0, s*0.8, s*0.3);
-  } else if (type === BUN_BOT) {
-    fill(getCol('#E89F4C')); 
-    arc(0, 0, s, s, 0, 180, CHORD);
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  pg = createGraphics(windowWidth, windowHeight);
+  pg.pixelDensity(1);
+  
+  inputField.position(windowWidth / 2 - 125, windowHeight - 90);
+  exportBtn.position(windowWidth - 100, 20); 
+  // 리사이즈 시에도 슬라이더 높이를 동일하게 유지
+  sizeSlider.position(windowWidth - 240, windowHeight - 40);
+  cookSlider.position(windowWidth - 120, windowHeight - 40);
+  
+  if (prevUserTxt !== "") {
+    let temp = prevUserTxt;
+    prevUserTxt = ""; 
+    activeIngredients = []; 
+    inputField.value(temp);
+    onTextInput();
   }
 }
